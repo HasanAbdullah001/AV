@@ -1,0 +1,849 @@
+Project description: 
+ESP32 to Control the vehicle Wednesday using the Wi-fi
+Vehicle Hardware : 
+1. ESP32 (Controls the vehicle according to receipt code from PC)  
+2. 12v battery(WGP) 
+3. Motor Driver L298N (Drive the vehicle from Pwm signal of ESP32 ) 
+4. Two gear motor (Runs the vehicle from signal of bottle driver )
+5.Servo Motor MG90(Change is the direction of the vehical, works as steering of the vehicle ) 
+6. Mini-360-Buck-DC-DC-Converter-Step-Down-Module
+7. ESP32 camera (Send the FOV road video of vesical)
+
+Circuit: 
+1. ESP32 input voltage 10volt,  and it [GPIO5, GPIO18, GPIO19] He is respectably connected with Motor Driver [IN2, IN1, ENA]
+2. Motor Driver input (VCC) Voltage 10, Motor Drivers OUT1(+) and OUT2(-)  is Connected with positive and negative side of 2 motors in parallel. 
+3. 5v output of motor driver is supplied to servo Motors input voltage. Common ground with battery.
+4. Servo Motors signal is connected with ESP32s GPIO13
+5. ESP32 input voltage supply 6.30volt. (through Buck converter) 
+
+
+
+Software for Vehicle :
+1. Install Python 3.9, 3.7 (Add them in environment variable of windows)
+2. install esptool
+3. First flash ESP32 firmware for microbyton support esp32-idf3-20210202-v1.14.bin
+	 Visual Studio: Connection ESP32 with your computer and check port number from management. To flash the firmware: Navigate to the [esp32-idf3-20210202-v1.14.bin] folder, Open terminal in that folder,
+commend: esptool --chip esp32 --port COM4 erase_flash          #COM4 port number
+commend: esptool --chip esp32 --port COM4 --baud 460800 write_flash -z 0x1000 esp32-idf3-20210202-v1.14.bin
+
+The codes we need to upload in our esp32:
+
+Code file name list:
+	1. boot.py 
+	2. main.py
+	3. motor.py 
+	4. web.py 
+	5. server.py
+
+
+Full code:
+========================
+1. boot.py :
+---------------------------------------------
+# notify
+print('RUN: boot.py')
+========================
+2. main.py:
+---------------------------------------------
+# notify
+print('RUN: main.py')
+# import necessary methods on boot
+import motor
+import web
+web.connect()
+import server
+server.soc()
+========================
+3. motor.py 
+---------------------------------------------
+import machine
+from machine import Pin, PWM
+import time
+
+#pin definition
+p1 = machine.Pin(5, machine.Pin.OUT)
+p2 = machine.Pin(18, machine.Pin.OUT)
+p3 = machine.Pin(19)
+pwm = machine.PWM(p3, freq=50)
+
+#arduino "map" function implementation
+def convert(x, i_m, i_M, o_m, o_M):
+    return max(min(o_M, (x - i_m) * (o_M - o_m) // (i_M - i_m) + o_m), o_m)
+
+#easy to use function for setting motor speed and direction
+def motorSpeed(m1):
+    pwm1 = convert(abs(m1),0, 1000, 0, 1000) 
+    pwm.duty(pwm1)
+    if m1>0:
+        p1.on()
+        p2.off()
+    else:
+        p1.off()
+        p2.on()
+========================
+4. web.py 
+---------------------------------------------
+# setting up wireless connection
+def connect():
+    import network
+    import time
+    import machine
+    #wifi credentials
+    ssid = "Loading 2g"
+    password =  "#Wifi2023#"
+ 
+    station = network.WLAN(network.STA_IF)
+    
+    if station.isconnected() == True:
+        print("Already connected")
+        return
+    station.active(True)
+    if machine.reset_cause() != machine.SOFT_RESET:
+        # configuration below MUST match your home router settings!!
+        # CHECK DHCP RANGE OF YOUR ROUTER BEFORE ASSIGNING STATIC IP!!
+        #station.ifconfig(('static ip you want to assign', 'subnet mask', 'host ip', 'dns server')) 
+        example: station.ifconfig(('192.168.137.110', '255.255.255.0', '192.168.0.1', '8.8.8.8'))
+        #if you are using laptop as access point: station.ifconfig(('static ip you want to assign', 'subnet mask', 'host ip', 'host ip'))
+    station.connect(ssid, password)
+ 
+    while station.isconnected() == False:
+        pass
+    print("Connection successful")
+    
+    #turn on onboard led for 5 sec to notify the successful connection
+    from machine import Pin
+    p = Pin(2, Pin.OUT)
+    print(station.ifconfig())
+    p.on()
+    time.sleep(5)
+    p.off()
+========================
+5. server.py
+---------------------------------------------
+import json                     # to deserialze list
+import motor                    # control the motor on car
+
+def soc():
+    import socket               # Import socket module
+    import time
+    from machine import Pin, TouchPad, PWM
+    
+    #servo pin setup
+    p1 = Pin(13)
+    servo = PWM(p1, freq=50)
+    
+    #socket setup
+    s = socket.socket()         # Create a socket object
+    host = '192.168.0.102'    	# Esp32 static ip
+    port = 12345                # Reserve a port for your service.
+    s.bind((host, port))        # Bind to the port
+    s.listen(5)                 # Now wait for client connection.
+    
+    def convert(x, i_m, i_M, o_m, o_M):
+        return max(min(o_M, (x - i_m) * (o_M - o_m) // (i_M - i_m) + o_m), o_m)
+    
+    
+    def con():
+    	motor.motorSpeed(0)
+	while True:
+	    c, addr = s.accept()    # Establish connection with client.
+	    print ('Got connection from', addr)
+	    
+		    
+	    while True:
+		d = "thank you for connection"
+		data = str(d)
+		msg =str.encode(data, 'utf-8')
+		try:
+		    c.send(msg)
+		    a = c.recv(1024)
+		    com = a.decode()       
+		    de = json.loads(com)#deserialze incoming dictionary
+                    if len(de)<3:
+                        angle = int(de['a'])
+		        speed = int(de["w"])
+		        servo.duty(angle)
+		        print(angle, speed)
+		        if abs(speed):
+			    motor.motorSpeed(speed)
+		        #if speed < 0:
+		        #	motor.motorSpeed(speed)
+		        else:
+			    motor.motorSpeed(0)
+                    else:
+                        if de["w"] == 1 and de["s"] == 0:
+                            motor.motorSpeed(200)
+                        if de["s"] == 1 and de["w"] == 0:
+                            motor.motorSpeed(-200)
+                        if de["a"] == 1 and de["d"] == 0:
+                            servo.duty(55) #Turn left angle
+                        if de["d"] == 1 and de["a"] == 0:
+                            servo.duty(95)#Turn right angle
+                        if de["d"] == 0 and  de["a"] == 0:
+                            servo.duty(75) #stey in cnter
+                        if de["w"] == 0 and de["s"] == 0:
+                            motor.motorSpeed(0)
+                        print(de) #for debugging
+		except:
+		    con()
+     
+    con()    
+				    #print(de) #for debugging
+===========================================================
+
+To upload all of this code in ESP32 follow this instruction: 
+1. Connecting to ESP32:
+#Executive code in the directory of the file from common prompt
+Command: pip install rshell
+Command: rshell --port COM4              
+# Remember to check your port number esp32 and replace it with the COM number
+Command: repl
+# Press the EN button in ESP32
+
+Command: cp boot.py /pyboard
+Command: cp main.py /pyboard
+Command: cp motor.py /pyboard
+
+# Before uploading the  web.py file, input your ssid and password of your router in the code and save. 
+Command: cp web.py /pyboard
+
+# Before uploading the  server.py input host = '192.168.0.102'    	# Esp32 static ip
+# We need to adjust our steering angle, vehicle speed  of our from here
+Command: cp server.py /pyboard
+
+Command: repl
+
+#Then Press EN Button Of  ESP32
+
+### If everything's okay we will get a successful connection with our wifi message 
+
+
+==================================This is the end of hardware side code=======================
+
+Software code to send control from laptop:
+Command: python -m venv venv
+Command: .\venv\Scripts\activate
+Command: pip install pynput
+Command: pip install pywin32
+Command: python client.py
+
+#after connection pressing w to (forward),  s (backward), d to (left) , a to (right) to control the vehicle form laptop like this https://t.me/c/2063943199/156
+
+---------------------------------------------------------------------------
+Camera code: 
+To upload the code in ESP32 cam we can fallow this video 
+https://youtu.be/g1J_7lx5QEU?si=_5Z10VgsRfRjFYQz 
+----------------------------------------------------------------------------
+
+
+#Next data collection: 
+Set up a track for the car to drive. 
+After setting up everything We are ready to collect some data. 
+
+start your vehicle and check camera stream the video or not at: http://192.168.0.131:81/stream (May be different ip for different setup) if all ok:
+
+Create a new folder training:
+From the folder directory open command prompt and create virtual environment:
+Command: python -m venv venv
+Command: venv\Scripts\activate 
+#python 3.7 (add in environment variable)
+Command: python -m pip install --upgrade pip
+Command: pip uninstall tensorflow
+Command: pip install tensorflow==1.15.0
+Command: pip install tensorlearn
+Command: python stream.py  (code below)
+
+#Run the vehicle on the track To connect data try to be on the track And check your camera is taking the picture of or track, To end the data collection process q
+will crate a file:  training_data.npy
+
+From the venv directory run:
+Command: balance.py   (code below)
+
+To see our data:  
+Command: see_traning_data.py     #By pressing the instructed button we can see our data
+
+To Delete or edit our data:
+Command: clean.py   (code below) #By pressing the instructed button We can edit our data
+
+To see the final data:
+Command: data_test.py (code below)
+=================================== End of collecting data =============================
+
+#To train our model with data:
+The directory folder keep this .py file: (code below): alexnet.py , log.py
+Command: python -m venv Tvenv
+Command: Tvenv\Scripts\activate
+Command: pip uninstall tensorflow
+Command: pip install tensorflow==1.15.0
+Command: pip install tensorflow==1.15.0
+Command: pip install tensorflow-cpu==1.15.0
+Command: pip install protobuf==3.20.3
+Command: pip install opencv-python
+Command: pip install pywin32
+
+Command: python train_model.py  (code below) In the code input how many epochs you want to train. Out of memory errors is expected. 
+Close all the application in the background and restart the threading process,
+
+###After End of the training it will save a model like: autonomous_car-0.001-alexnet-15-epochs.model.data-00000-of-00001 and log folder, checkpoint file   (keep them)
+
+#To check model: First in the code change the epochs number with the epoch number we trained for our model
+Command: Tvenv\Scripts\activate 
+Command: pip install numpy scikit-learn
+Command: python calculate_accuracy.py  (code below)
+
+# To  check (Model accuracy, loss, validity graph) with tensorboard:
+Command: Tvenv\Scripts\activate 
+Command: pip install tensorboard
+Command: tensorboard --logdir="log"
+From browser: http://localhost:6006
+
+If our modern have good accuracy then 
+=================================== End of  train Model =============================
+
+#To test Ai model or Vehicle  from the virtual environment directory run this:
+#First in the code change the epochs number with the epoch number we trained for our model
+Command: ok_pid-run.py    (code below)   # Input PID value in the GUI to smooth out the A steering angle movements, 
+
+=================================== That's our automation vehicle with steering angle prediction===================
+
+Now the codes:
+stream.py 
+balance.py 
+see_traning_data.py
+clean.py 
+data_test.py 
+data_test.py
+alexnet.py
+log.py
+train_model.py
+ok_pid-run.py 
+
+
+1. stream.py: 
+------------------------------------------------------------------------------------
+import cv2
+import numpy as np
+import socket
+from log import key_check
+import os
+import time
+
+s = socket.socket()
+host = '192.168.0.102'
+port = 12345
+s.connect((host, port))
+
+cap = cv2.VideoCapture('http://192.168.0.131:81/stream')
+time.sleep(5)
+print('start')
+
+# Modified file handling
+file_name = 'training_data.npy'
+if os.path.isfile(file_name):
+    print("File exists, loading previous data")
+    training_data = list(np.load(file_name, allow_pickle=True))
+else:
+    print('File does not exist, starting fresh')
+    training_data = []
+
+def key_out(key):
+    output = [0, 0, 0, 0]
+    if 'A' in key:
+        output[0] = 1
+    if 'D' in key:
+        output[2] = 1
+    if 'W' in key:
+        output[1] = 1
+    if 'S' in key:
+        output[3] = 1
+    return output
+
+while(True):
+    key = key_check()
+    a = key_out(key)
+    
+    x = '{"a":' + str(a[0]) + ',"d":' + str(a[2]) + ',"w":' + str(a[1]) + ',"s":' + str(a[3]) + "}"
+    msg = str.encode(x, 'utf-8')
+    s.send(msg)
+    data1 = s.recv(1024)
+    ret, frame = cap.read()
+    
+    if not ret:
+        print("Failed to grab frame")
+        continue
+        
+    rotate = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    screen = cv2.cvtColor(rotate, cv2.COLOR_BGR2GRAY)
+    screen = cv2.resize(screen, (80, 60))
+    
+    screen = np.array(screen, dtype=np.uint8)
+    a.pop()
+    
+    training_data.append([screen, np.array(a, dtype=np.int32)])
+    
+    cv2.imshow('rotate', rotate)
+    cv2.imshow('screen', screen)
+    
+    if len(training_data) % 500 == 0:
+        print(f"Saving {len(training_data)} samples...")
+        training_data_np = np.array(training_data, dtype=object)
+        np.save(file_name, training_data_np)
+   
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Save final data
+training_data_np = np.array(training_data, dtype=object)
+np.save(file_name, training_data_np)
+
+cap.release()
+cv2.destroyAllWindows()
+s.close()
+------------------------------------------------------------------------------------
+
+
+
+balance.py:
+------------------------------------------------------------------------------------
+import numpy as np 
+import pandas as pd
+from collections import Counter
+from random import shuffle
+
+train_data = np.load('training_data.npy', allow_pickle=True)
+
+# Creating DataFrame from the training data with dtype=object
+df = pd.DataFrame(train_data, dtype=object)
+print(df.head())
+print(Counter(df[1].apply(str)))
+
+lefts = []
+rights = []
+forwards = []
+
+shuffle(train_data)
+
+for data in train_data:
+    img = data[0]
+    choice = data[1]
+    # Convert choice to list for comparison
+    choice_list = choice.tolist()
+    
+    if choice_list == [1, 1, 0]:
+        lefts.append([img, choice_list])
+    elif choice_list == [0, 1, 1]:
+        rights.append([img, choice_list])
+    elif choice_list == [0, 1, 0]:
+        forwards.append([img, choice_list])
+
+# Balance the classes
+min_length = min(len(forwards), len(lefts), len(rights))
+forwards = forwards[:min_length]
+rights = rights[:min_length]
+lefts = lefts[:min_length]
+
+print(f"Balanced lengths: forwards={len(forwards)}, rights={len(rights)}, lefts={len(lefts)}")
+final_data = forwards + lefts + rights
+
+shuffle(final_data)
+print(f"Final dataset length: {len(final_data)}")
+np.save('balanced.npy', final_data)
+------------------------------------------------------------------------------------
+
+3. see_traning_data.py: 
+------------------------------------------------------------------------------------
+import numpy as np
+import cv2
+import os  # Missing import added
+import time
+
+# Load the training data
+file_name = 'training_data.npy'
+
+if not os.path.isfile(file_name):
+    print(f"File '{file_name}' does not exist.")
+    exit()
+
+training_data = np.load(file_name, allow_pickle=True)
+print(f"Loaded {len(training_data)} samples from {file_name}.")
+
+# Initialize index and playback status
+current_index = 0
+play = False
+
+# Function to display the image and its value
+def display_image(index):
+    global training_data
+    if 0 <= index < len(training_data):
+        image, value = training_data[index]
+        
+        # Resize the image to a standard size
+        resized_image = cv2.resize(image, (640, 480))  # Resize to 640x480
+        cv2.imshow('Training Data Viewer', resized_image)
+        
+        print(f"Image {index + 1}/{len(training_data)}, Value: {value}")
+    else:
+        print("Index out of range.")
+
+# Initial display
+display_image(current_index)
+
+while True:
+    if play:
+        current_index += 1
+        if current_index >= len(training_data):
+            current_index = 0  # Loop back to the first image
+        display_image(current_index)
+        time.sleep(0.5)  # Delay for playback
+
+    # Wait for key press
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord('n'):  # Next image
+        play = False
+        current_index += 1
+        if current_index >= len(training_data):
+            current_index = 0  # Loop back to the first image
+        display_image(current_index)
+
+    elif key == ord('b'):  # Previous image
+        play = False
+        current_index -= 1
+        if current_index < 0:
+            current_index = len(training_data) - 1  # Loop back to the last image
+        display_image(current_index)
+
+    elif key == ord('p'):  # Play images
+        play = True
+
+    elif key == ord('q'):  # Quit
+        break
+
+# Cleanup
+cv2.destroyAllWindows()
+------------------------------------------------------------------------------------
+
+clean.py :
+------------------------------------------------------------------------------------
+import numpy as np
+import cv2
+
+# Load the data
+train_data = np.load('balanced.npy', allow_pickle=True)
+
+# Initialize an index to keep track of the current image
+index = 0
+
+# Function to display an image
+def display_image(img):
+    img2 = cv2.resize(img, (400, 300))
+    cv2.imshow('Image Labeling', img2)
+
+# Main loop for labeling images
+while True:
+    if index < 0:
+        index = 0
+    elif index >= len(train_data):
+        print("End of data.")
+        break
+    
+    img, choice = train_data[index]
+    display_image(img)
+    print(f"Image {index + 1}/{len(train_data)}")
+    print("Options: [a] Left, [w] Forward, [d] Right, [s] Reverse")
+    print("          [B] Back, [N] Next, [X] Delete, [Q] Quit")
+    
+    key = cv2.waitKey(0) & 0xFF
+    
+    if key == ord('q'):  # Quit
+        print("Quitting...")
+        break
+    elif key == ord('b'):  # Previous image
+        index -= 1
+    elif key == ord('n'):  # Next image
+        index += 1
+    elif key == ord('x'):  # Delete the current image
+        print(f"Deleting image {index + 1}")
+        train_data = np.delete(train_data, index, axis=0)
+    elif key in [ord('a'), ord('w'), ord('d'), ord('s')]:  # Label input
+        label = chr(key)
+        train_data[index][1] = label
+        print(f"Labeled image {index + 1} as '{label}'")
+        index += 1
+    else:
+        print("Invalid input. Please try again.")
+    
+    if index >= len(train_data):
+        print("End of data.")
+        break
+
+cv2.destroyAllWindows()
+
+    #python clean.py
+    #pip install numpy
+------------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------------
+
+alexnet.py: 
+------------------------------------------------------------------------------------
+""" Alexnet.
+
+References:
+    - Alex Krizhevsky, Ilya Sutskever & Geoffrey E. Hinton. ImageNet
+    Classification with Deep Convolutional Neural Networks. NIPS, 2012.
+
+"""
+
+import tflearn
+from tflearn.layers.conv import conv_2d, max_pool_2d
+from tflearn.layers.core import input_data, dropout, fully_connected
+from tflearn.layers.estimator import regression
+from tflearn.layers.normalization import local_response_normalization
+
+def alexnet(width, height, lr):
+    network = input_data(shape=[None, width, height, 1], name='input')
+    network = conv_2d(network, 96, 11, strides=4, activation='relu')
+    network = max_pool_2d(network, 3, strides=2)
+    network = local_response_normalization(network)
+    network = conv_2d(network, 256, 5, activation='relu')
+    network = max_pool_2d(network, 3, strides=2)
+    network = local_response_normalization(network)
+    network = conv_2d(network, 384, 3, activation='relu')
+    network = conv_2d(network, 384, 3, activation='relu')
+    network = conv_2d(network, 256, 3, activation='relu')
+    network = max_pool_2d(network, 3, strides=2)
+    network = local_response_normalization(network)
+    network = fully_connected(network, 4096, activation='tanh')
+    network = dropout(network, 0.5)
+    network = fully_connected(network, 4096, activation='tanh')
+    network = dropout(network, 0.5)
+    network = fully_connected(network, 3, activation='softmax')
+    network = regression(network, optimizer='momentum',
+                         loss='categorical_crossentropy',
+                         learning_rate=lr, name='targets')
+
+    model = tflearn.DNN(network, checkpoint_path='model_alexnet',
+                        max_checkpoints=1, tensorboard_verbose=2, tensorboard_dir='log')
+
+    return model
+------------------------------------------------------------------------------------
+
+log.py 
+------------------------------------------------------------------------------------
+import win32api as wapi
+import time
+
+keyList = ["\b"]
+for char in "ABCDEFGHIJKLMNOPQRSTUVWXYZ 123456789,.'£$/\\":
+    keyList.append(char)
+
+def key_check():
+    keys = []
+    for key in keyList:
+        if wapi.GetAsyncKeyState(ord(key)):
+            keys.append(key)
+    return keys
+
+#To get AWSD key positions
+def key_out(key):
+    output = [0, 0, 0, 0]
+    if 'A' in key:
+        output[0] = 1
+    if 'D' in key:
+        output[3] = 1
+    if 'W' in key:
+        output[1] = 1
+    if 'S' in key:
+        output[2] = 1
+    return output
+
+#for testing
+#while True:
+#    key = key_check()
+#    a = key_out(key)
+#    print(a)
+------------------------------------------------------------------------------------
+
+
+train_model.py
+------------------------------------------------------------------------------------
+import numpy as np
+from alexnet import alexnet
+
+WIDTH = 80
+HEIGHT = 60
+LR = 1e-3
+EPOCHS = 20
+MODEL_NAME = 'autonomous_car-{}-{}-{}-epochs.model'.format(LR, 'alexnet',EPOCHS)
+
+model = alexnet(WIDTH, HEIGHT, LR)
+
+train_data = np.load('balanced.npy', allow_pickle=True)
+
+train = train_data[:-200]
+test = train_data[-200:]
+
+X = np.array([i[0] for i in train]).reshape(-1,WIDTH,HEIGHT,1)
+Y = [i[1] for i in train]
+
+test_x = np.array([i[0] for i in test]).reshape(-1,WIDTH,HEIGHT,1)
+test_y = [i[1] for i in test]
+
+#Now we can actually train the model with:
+model.fit({'input': X}, {'targets': Y}, n_epoch=EPOCHS, validation_set=({'input': test_x}, {'targets': test_y}), 
+    snapshot_step=500, show_metric=True, run_id=MODEL_NAME)
+
+
+
+model.save(MODEL_NAME)
+------------------------------------------------------------------------------------
+
+ok_pid-run.py
+------------------------------------------------------------------------------------
+import cv2
+import numpy as np
+import socket
+import tkinter as tk
+from tkinter import Scale
+import os
+import time
+from alexnet import alexnet
+
+# Socket setup
+s = socket.socket()  # Create a socket object
+host = '192.168.0.102'  # Get local machine name
+port = 12345  # Reserve a port for your service.
+s.connect((host, port))
+cap = cv2.VideoCapture('http://192.168.0.131:81/stream')
+
+speed = 200
+last_pos = 0
+w = 0
+KP, KI, KD = 0.8, 0.5, 5
+max_correction = 2000
+
+WIDTH = 80
+HEIGHT = 60
+LR = 1e-3
+EPOCHS = 15
+MODEL_NAME = 'autonomous_car-{}-{}-{}-epochs.model'.format(LR, 'alexnet', EPOCHS)
+
+model = alexnet(WIDTH, HEIGHT, LR)
+model.load(MODEL_NAME)
+
+
+def convert(x, i_m, i_M, o_m, o_M):
+    return max(min(o_M, (x - i_m) * (o_M - o_m) // (i_M - i_m) + o_m), o_m)
+
+
+def weighted(move):
+    move.pop(1)
+    avg_num = 0.0
+    avg_den = 0.0
+    for i in range(0, 2):
+        avg_num += move[i] * i * 1000
+        avg_den += move[i]
+    return avg_num / avg_den
+
+
+def correction(angle):
+    if angle > 0:
+        if angle > max_correction:
+            angle = max_correction
+        else:
+            angle = angle
+    else:
+        if angle < -max_correction:
+            angle = -max_correction
+        else:
+            angle = angle
+    return angle
+
+
+def servo_angle(z):
+    if z > 0:
+        steer_angle = convert(z, 0, 1000, 75, 95) #to turn right
+    else:
+        steer_angle = convert(z, -1000, 0, 58, 75) #to turn left
+    return steer_angle
+
+
+# Function to update PID values from sliders
+def update_parameters():
+    global KP, KI, KD
+    KP = kp_slider.get()
+    KI = ki_slider.get()
+    KD = kd_slider.get()
+
+
+# PID Adjustment GUI
+root = tk.Tk()
+root.geometry("80x400")
+root.title("PID Control")
+
+# Sliders for PID values
+kp_slider = Scale(root, from_=0, to=5, resolution=0.1, label="KP", orient="vertical")
+kp_slider.set(KP)
+kp_slider.pack()
+
+ki_slider = Scale(root, from_=0, to=5, resolution=0.1, label="KI", orient="vertical")
+ki_slider.set(KI)
+ki_slider.pack()
+
+kd_slider = Scale(root, from_=0, to=5, resolution=0.1, label="KD", orient="vertical")
+kd_slider.set(KD)
+kd_slider.pack()
+
+
+while True:
+    update_parameters()  # Update PID values from sliders
+
+    ret, frame = cap.read()
+    if not ret:
+        print("Failed to grab frame!")
+        break
+
+    screen = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    screen = cv2.resize(screen, (80, 60))
+    cv2.imshow('screen', screen)
+    prediction = model.predict([screen.reshape(WIDTH, HEIGHT, 1)])[0]
+    moves = list(np.around(prediction, decimals=2))
+    w = convert(weighted(moves), 0, 1000, -500, 500)
+
+    propotional_angle = int(w)
+    derivative_angle = propotional_angle - last_pos
+    integral_angle = propotional_angle + last_pos
+    steer = (propotional_angle * KP + derivative_angle * KD + integral_angle * KI)
+    z = int(correction(steer))
+    st = servo_angle(z)
+    x = '{"a":'
+    x += str(st)
+    x += ',"w":'
+    x += str(speed)
+    x += "}"
+    msg = str.encode(x, 'utf-8')
+    print(msg)
+    s.send(msg)
+    data1 = s.recv(1024)
+    last_pos = propotional_angle
+
+    print(moves, st)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+    root.update_idletasks()
+    root.update()
+
+cap.release()
+cv2.destroyAllWindows()
+------------------------------------------------------------------------------------
+========================== THE END of project ===========================
+
+1. Hardware setup:  Motor driver, Power supply management, Assembling the vehicle properly with straight stirring angle of servo motor, ESP32 communication, esp camera stream, (Socket communication), WiFi ssid and password, Basic python, Micro Python, IDE 
+2. How to train ai model
+3. How to train AI model for autonomous vehicle 
+	Data collection, data cleaning, data testing, data balancing, training model(Overfeeding under feeding over training monitor the training accuracy and loss), testing the model accuracy loss and validity. 
+4. What is AI or CNN. How the layears of a model, how do they work to predict, 
+5. PID control, equation. 
+ 
